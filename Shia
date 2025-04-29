@@ -1,0 +1,324 @@
+-- KRNL-Compatible Client-Sided Roblox Player Webhook Script
+-- Fixed version with proper syntax
+
+-- Add KRNL detection
+local isKRNL = false
+pcall(function()
+    if KRNL_LOADED then
+        isKRNL = true
+        print("KRNL detected!")
+    end
+end)
+
+-- Add beginning of script message
+print("Player Webhook Script (KRNL Compatible)")
+print("--------------------------------------")
+
+-- Change this to your webhook URL
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1365025141070893056/mdwqSvclv66nmHYpf-n-2VcG7K5pZCbGy-5ksKL4Cw_xumBSgD6Z1LECZJOa9eqJXE_-"
+
+-- Function to detect which HTTP request method is available
+local function getHttpMethod()
+    if syn and syn.request then
+        return "syn.request"
+    elseif http and http.request then
+        return "http.request"
+    elseif request then
+        return "request"
+    elseif httpservice then
+        return "httpservice"
+    else
+        -- KRNL detection without global variable
+        local success, result = pcall(function()
+            return http and http.request ~= nil
+        end)
+        if success and result then
+            return "krnl"
+        end
+        return nil
+    end
+end
+
+-- Function to send HTTP request based on available method
+local function sendHttpRequest(url, method, headers, body)
+    local httpMethod = getHttpMethod()
+    
+    if httpMethod == "syn.request" then
+        return syn.request({
+            Url = url,
+            Method = method,
+            Headers = headers,
+            Body = body
+        })
+    elseif httpMethod == "http.request" then
+        return http.request({
+            Url = url,
+            Method = method,
+            Headers = headers,
+            Body = body
+        })
+    elseif httpMethod == "request" then
+        return request({
+            Url = url,
+            Method = method,
+            Headers = headers,
+            Body = body
+        })
+    elseif httpMethod == "httpservice" then
+        return httpservice:RequestAsync({
+            Url = url,
+            Method = method,
+            Headers = headers,
+            Body = body
+        })
+    elseif httpMethod == "krnl" then
+        -- KRNL specific request format
+        local success, result = pcall(function()
+            return http.request({
+                Url = url,
+                Method = method,
+                Headers = headers,
+                Body = body
+            })
+        end)
+        if success then return result end
+    end
+    
+    -- Last attempt fallback for any executor
+    warn("Using fallback HTTP request method")
+    local success, result = pcall(function()
+        -- Try generic request function as last resort
+        if request then
+            return request({
+                Url = url,
+                Method = method,
+                Headers = headers,
+                Body = body
+            })
+        end
+        return nil
+    end)
+    
+    if success then
+        return result
+    else
+        warn("No HTTP request method available!")
+        return nil
+    end
+end
+
+-- Try to handle errors better for KRNL
+local function safeJSONEncode(data)
+    local success, result = pcall(function()
+        return game:GetService("HttpService"):JSONEncode(data)
+    end)
+    
+    if success then
+        return result
+    else
+        -- Simplify data structure if complex encoding fails
+        local playerNames = {}
+        local Players = game:GetService("Players")
+        for _, player in ipairs(Players:GetPlayers()) do
+            table.insert(playerNames, player.Name)
+        end
+        
+        -- Basic data structure that should encode without issues
+        local simpleData = {
+            content = "Player List: " .. table.concat(playerNames, ", ")
+        }
+        
+        -- Try again with simplified data
+        success, result = pcall(function()
+            return game:GetService("HttpService"):JSONEncode(simpleData)
+        end)
+        
+        if success then
+            return result
+        else
+            warn("Failed to encode even simplified JSON")
+            return nil
+        end
+    end
+end
+
+-- Function to collect player names and send to webhook
+local function sendPlayerNamesToWebhook()
+    local Players = game:GetService("Players")
+    local playerList = Players:GetPlayers()
+    local playerInfo = {}
+    
+    -- Gather player information
+    for _, player in ipairs(playerList) do
+        -- Get leaderstats data with error handling
+        local stats = {}
+        local success = pcall(function()
+            local leaderstats = player:FindFirstChild("leaderstats")
+            if leaderstats then
+                for _, stat in pairs(leaderstats:GetChildren()) do
+                    if stat:IsA("IntValue") or stat:IsA("StringValue") or 
+                       stat:IsA("NumberValue") or stat:IsA("BoolValue") then
+                        stats[stat.Name] = tostring(stat.Value)
+                    end
+                end
+            end
+        end)
+        
+        -- Add player to list regardless of leaderstats success
+        table.insert(playerInfo, {
+            Name = player.Name,
+            DisplayName = player.DisplayName,
+            UserId = player.UserId,
+            Leaderstats = stats
+        })
+    end
+    
+    -- Format player info into readable text
+    local playerText = ""
+    for _, info in ipairs(playerInfo) do
+        playerText = playerText .. "👤 **" .. info.Name .. "** (Display: " .. info.DisplayName .. ")\n"
+        playerText = playerText .. "  • UserID: " .. info.UserId .. "\n"
+        
+        -- Format leaderstats
+        if next(info.Leaderstats) then
+            playerText = playerText .. "  • Stats:\n"
+            for statName, statValue in pairs(info.Leaderstats) do
+                playerText = playerText .. "    - " .. statName .. ": " .. tostring(statValue) .. "\n"
+            end
+        else
+            playerText = playerText .. "  • Stats: No leaderstats found\n"
+        end
+        
+        playerText = playerText .. "\n"
+    end
+    
+    -- Create data to send
+    local data = {
+        content = "🔍 **Server Scan Results**",
+        embeds = {
+            {
+                title = "📋 Player List",
+                description = #playerInfo > 0 and playerText or "No players found",
+                color = 5793266,
+                fields = {
+                    {
+                        name = "Server Information",
+                        value = "Place ID: " .. game.PlaceId .. "\nJob ID: " .. game.JobId
+                    },
+                    {
+                        name = "Total Players",
+                        value = #playerInfo .. "/" .. Players.MaxPlayers
+                    }
+                },
+                footer = {
+                    text = "Executed by: " .. Players.LocalPlayer.Name
+                }
+            }
+        }
+    }
+    
+    -- Convert to JSON with error handling
+    local jsonData = safeJSONEncode(data)
+    
+    if not jsonData then
+        warn("Failed to encode JSON data")
+        return
+    end
+    
+    -- Send the webhook
+    local headers = {
+        ["Content-Type"] = "application/json"
+    }
+    
+    print("Attempting to send webhook...")
+    local success, response = pcall(function()
+        return sendHttpRequest(WEBHOOK_URL, "POST", headers, jsonData)
+    end)
+    
+    if success and response then
+        print("Webhook sent successfully!")
+        if response.StatusCode then
+            print("Response code: " .. tostring(response.StatusCode))
+        end
+    else
+        warn("Failed to send webhook! Error: " .. tostring(response))
+        
+        -- Try one more time with a much simpler payload
+        print("Trying again with simpler payload...")
+        local simpleData = {
+            content = "Player list from " .. game.PlaceId .. ": " .. 
+                     table.concat(
+                         (function()
+                             local names = {}
+                             for _, p in ipairs(Players:GetPlayers()) do
+                                 table.insert(names, p.Name)
+                             end
+                             return names
+                         end)(), 
+                         ", "
+                     )
+        }
+        
+        local success2, simpleJSON = pcall(function()
+            return game:GetService("HttpService"):JSONEncode(simpleData)
+        end)
+        
+        if success2 then
+            sendHttpRequest(WEBHOOK_URL, "POST", headers, simpleJSON)
+            print("Simple webhook attempt completed")
+        end
+    end
+end
+
+-- Display status indicator
+local function showNotification(message, color)
+    local player = game:GetService("Players").LocalPlayer
+    
+    -- Create notification with pcall to handle errors
+    pcall(function()
+        local screenGui = Instance.new("ScreenGui")
+        screenGui.Parent = player:WaitForChild("PlayerGui")
+    
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(0, 200, 0, 50)
+        frame.Position = UDim2.new(0.5, -100, 0.9, 0)
+        frame.BackgroundColor3 = color or Color3.fromRGB(0, 0, 0)
+        frame.BackgroundTransparency = 0.5
+        frame.BorderSizePixel = 0
+        frame.Parent = screenGui
+    
+        local text = Instance.new("TextLabel")
+        text.Size = UDim2.new(1, 0, 1, 0)
+        text.BackgroundTransparency = 1
+        text.Text = message
+        text.TextColor3 = Color3.fromRGB(255, 255, 255)
+        text.Font = Enum.Font.SourceSansBold
+        text.TextSize = 16
+        text.Parent = frame
+    
+        -- Fade out notification
+        spawn(function()
+            wait(3)
+            for i = 1, 10 do
+                frame.BackgroundTransparency = 0.5 + (i * 0.05)
+                text.TextTransparency = i * 0.1
+                wait(0.1)
+            end
+            screenGui:Destroy()
+        end)
+    end)
+end
+
+-- Execute the function with error handling
+local success, errorMsg = pcall(function()
+    showNotification("Scanning player data...", Color3.fromRGB(0, 100, 200))
+    sendPlayerNamesToWebhook()
+    showNotification("Player data sent to webhook!", Color3.fromRGB(0, 200, 0))
+end)
+
+if not success then
+    warn("Error in script: " .. tostring(errorMsg))
+    showNotification("Error sending data! Check console (F9)", Color3.fromRGB(200, 0, 0))
+end
+
+print("Script execution completed")
