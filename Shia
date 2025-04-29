@@ -321,4 +321,18 @@ if not success then
     showNotification("Error sending data! Check console (F9)", Color3.fromRGB(200, 0, 0))
 end
 
-print("Script execution completed")
+-- Set up a repeating timer to send data every 5 minutes
+spawn(function()
+    while true do
+        wait(300) -- 300 seconds = 5 minutes
+        
+        pcall(function()
+            showNotification("Sending updated player data...", Color3.fromRGB(0, 100, 200))
+            sendPlayerNamesToWebhook()
+            showNotification("Updated player data sent!", Color3.fromRGB(0, 200, 0))
+            print("Webhook data sent (periodic update)")
+        end)
+    end
+end)
+
+print("Script execution completed - Will send updates every 5 minutes")
